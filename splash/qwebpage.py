@@ -4,9 +4,11 @@ from collections import namedtuple
 import sip
 from PyQt5.QtWebKitWidgets import QWebPage, QWebView
 from PyQt5.QtCore import QByteArray
+from PyQt5.QtNetwork import QNetworkReply
 from twisted.python import log
 
 from splash.har_builder import HarBuilder
+from splash.network_manager import SplashQNetworkAccessManager
 
 RenderErrorInfo = namedtuple('RenderErrorInfo', 'type code text url')
 
@@ -122,6 +124,9 @@ class SplashQWebPage(QWebPage):
             # catch the error, populate self.errorInfo and return an error page
 
             info = sip.cast(info, QWebPage.ErrorPageExtensionOption)
+            error_check = False
+            if isinstance( self.networkAccessManager(), SplashQNetworkAccessManager ):
+                error_check = True if self.networkAccessManager().last_error_id == QNetworkReply.RemoteHostClosedError else False
 
             domain = 'Unknown'
             if info.domain == QWebPage.QtNetwork:
@@ -131,24 +136,31 @@ class SplashQWebPage(QWebPage):
             elif info.domain == QWebPage.WebKit:
                 domain = 'WebKit'
 
-            self.error_info = RenderErrorInfo(
-                domain,
-                int(info.error),
-                str(info.errorString),
-                str(info.url.toString())
-            )
+            if not self.render_options.get_fail_on_dataloss() and \
+               domain == 'HTTP' and \
+               int(info.error) == 200 and \
+               error_check == True:
+                content = self.mainFrame().toHtml()
+            else:
+                self.error_info = RenderErrorInfo(
+                    domain,
+                    int(info.error),
+                    str(info.errorString),
+                    str(info.url.toString())
+                )
 
-            # XXX: this page currently goes nowhere
-            content = u"""
-                <html><head><title>Failed loading page</title></head>
-                <body>
-                    <h1>Failed loading page ({0.text})</h1>
-                    <h2>{0.url}</h2>
-                    <p>{0.type} error #{0.code}</p>
-                </body></html>""".format(self.error_info)
+                # XXX: this page currently goes nowhere
+                content = u"""
+                    <html><head><title>Failed loading page</title></head>
+                    <body>
+                        <h1>Failed loading page ({0.text})</h1>
+                        <h2>{0.url}</h2>
+                        <p>{0.type} error #{0.code}</p>
+                    </body></html>""".format(self.error_info)
 
             errorPage = sip.cast(errorPage, QWebPage.ErrorPageExtensionReturn)
             errorPage.content = QByteArray(content.encode('utf-8'))
+            errorPage.encode = 'utf-8'
             return True
 
         # XXX: this method always returns True, even if we haven't

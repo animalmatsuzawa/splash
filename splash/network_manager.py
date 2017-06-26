@@ -100,6 +100,7 @@ class ProxiedQNetworkAccessManager(QNetworkAccessManager):
         self._response_bodies = {}  # requestId => response content
         self._request_ids = itertools.count()
         assert self.proxyFactory() is None, "Standard QNetworkProxyFactory is not supported"
+        self.last_error_id = QNetworkReply.NoError
 
     def _on_ssl_errors(self, reply, errors):
         reply.ignoreSslErrors()
@@ -282,6 +283,7 @@ class ProxiedQNetworkAccessManager(QNetworkAccessManager):
             return setattr(web_frame.page(), attribute, value)
 
     def _on_reply_error(self, error_id):
+        self.last_error_id = error_id
         self._response_bodies.pop(self._get_request_id(), None)
         
         if error_id != QNetworkReply.OperationCanceledError:

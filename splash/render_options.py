@@ -393,6 +393,8 @@ class RenderOptions(object):
             har=self._get_bool("har", defaults.SHOW_HAR),
         )
 
+    def get_fail_on_dataloss(self):
+        return self._get_bool("fail_on_dataloss", True)
 
 def validate_size_str(size_str):
     """
