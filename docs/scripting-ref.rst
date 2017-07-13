@@ -3,8 +3,14 @@
 Splash Scripts Reference
 ========================
 
-``splash`` object is passed to ``main`` function; via this object
-a script can control the browser. Think of it as of an API to
+.. note::
+
+    While this reference is comprehensive, it can be hard to navigate.
+    If you're just starting, or don't know what you're looking for exactly,
+    check :ref:`splash-lua-api-overview` first.
+
+``splash`` object is passed to ``main`` function as a first argument;
+via this object a script can control the browser. Think of it as of an API to
 a single browser tab.
 
 Attributes
@@ -22,10 +28,29 @@ values sent using ``application/json`` POST request.
 For example, if you passed 'url' argument to a script using HTTP API,
 then ``splash.args.url`` contains this URL.
 
-:ref:`splash-args` is the preferred way to pass parameters to Splash scripts.
-An alternative way is to use string formatting to build a script with
-variables embedded. There are two problems which make :ref:`splash-args`
-a better solution:
+You can also access ``splash.args`` using second, optional ``args`` argument
+of the ``main`` function:
+
+.. code-block:: lua
+
+    function main(splash, args)
+        local url = args.url
+        -- ...
+    end
+
+The example above is the same as
+
+.. code-block:: lua
+
+    function main(splash)
+        local url = splash.args.url
+        -- ...
+    end
+
+Using either ``args`` or :ref:`splash-args` is the preferred way to pass
+parameters to Splash scripts. An alternative way is to use string
+formatting to build a script with variables embedded.
+There are two problems which make :ref:`splash-args` a better solution:
 
 1. data must be escaped somehow, so that it doesn't break a Lua script;
 2. embedding variables makes it impossible to use script cache efficiently
@@ -146,6 +171,34 @@ of :ref:`splash-response-body-enabled` option.
 To enable response content tracking per-request call
 :ref:`splash-request-enable-response-body` in a :ref:`splash-on-request`
 callback.
+
+.. _splash-scroll-position:
+
+splash.scroll_position
+----------------------
+
+Get or set current scroll position.
+
+**Signature:** ``splash.scroll_position = {x=..., y=...}``
+
+This property allows to get and set current scroll position of the
+main window.
+
+Scrolling outside window content has no effect. For example, if you set
+``splash.scroll_position`` to ``{x=-100, y=-100}``, then
+``splash.scroll_position`` will likely still be equal to the default
+``{x=0, y=0}``.
+
+To set scroll position instead of the full form
+(e.g. ``splash.scroll_position = {x=100, y=200}``) you can also use the
+short form ``splash.scroll_position = {100, 200}``. Attribute
+value is always a table with ``x`` and ``y`` keys, even if you set it using
+the short form.
+
+It is also possible to omit coordinates which you don't want to change.
+For example, ``splash.scroll_position = {y=200}`` sets y to 200 and keeps
+previous x value.
+
 
 Methods
 ~~~~~~~
@@ -1250,11 +1303,11 @@ a binary image data with a proper Content-Type header:
 .. code-block:: lua
 
      -- A simplistic implementation of render.jpeg endpoint
-     function main(splash)
-         assert(splash:go(splash.args.url))
+     function main(splash, args)
+         assert(splash:go(args.url))
          return splash:jpeg{
-            width=splash.args.width,
-            height=splash.args.height
+            width=args.width,
+            height=args.height
          }
      end
 
@@ -1325,10 +1378,10 @@ all existing logs and start recording from scratch:
 
 .. code-block:: lua
 
-     function main(splash)
-         assert(splash:go(splash.args.url1))
+     function main(splash, args)
+         assert(splash:go(args.url1))
          local har1 = splash:har{reset=true}
-         assert(splash:go(splash.args.url2))
+         assert(splash:go(args.url2))
          local har2 = splash:har()
          return {har1=har1, har2=har2}
      end
@@ -2211,14 +2264,6 @@ Trigger mouse click event in web page.
 **Async:** no.
 
 Coordinates for mouse events must be relative to viewport.
-Element on which action is performed must be inside viewport
-(must be visible to the user). If element is outside viewport and
-user needs to scroll to see it, you must either scroll to the element
-with JavaScript or set viewport to full with
-:ref:`splash-set-viewport-full`.
-
-Mouse events are not propagated immediately, to see consequences of click
-reflected in page source you must call :ref:`splash-wait`.
 
 If you want to click on element an easy way is to use :ref:`splash-select`
 with :ref:`splash-element-mouse-click`:
@@ -2245,6 +2290,7 @@ use JavaScript getClientRects_ to get coordinates of html element:
         splash:set_viewport_full()
         splash:wait(0.1)
         local dimensions = get_dimensions()
+        -- FIXME: button must be inside a viewport
         splash:mouse_click(dimensions.x, dimensions.y)
 
         -- Wait split second to allow event to propagate.
@@ -2254,13 +2300,31 @@ use JavaScript getClientRects_ to get coordinates of html element:
 
 .. _getClientRects: https://developer.mozilla.org/en/docs/Web/API/Element/getClientRects
 
+Unlike :ref:`splash-element-mouse-click`, :ref:`splash-mouse-click` is not
+async. Mouse events are not propagated immediately, to see consequences
+of click reflected in page source you must call :ref:`splash-wait` if you
+use :ref:`splash-mouse-click`.
+
+Element on which action is performed must be inside viewport
+(must be visible to the user). If element is outside viewport and
+user needs to scroll to see it, you must either scroll to the element
+(using JavaScript, :ref:`splash-scroll-position` or e.g.
+``element:scrollIntoViewIfNeeded()``) or set viewport to full with
+:ref:`splash-set-viewport-full`.
+
+.. note::
+
+    :ref:`splash-element-mouse-click` scrolls automatically, unlike
+    :ref:`splash-mouse-click`.
+
 Under the hood :ref:`splash-mouse-click` performs :ref:`splash-mouse-press`
 followed by :ref:`splash-mouse-release`.
 
 At the moment only left click is supported.
 
 See also: :ref:`splash-element-mouse-click`, :ref:`splash-mouse-press`,
-:ref:`splash-mouse-release`, :ref:`splash-mouse-hover`, .
+:ref:`splash-mouse-release`, :ref:`splash-mouse-hover`,
+:ref:`splash-scroll-position`.
 
 
 .. _splash-mouse-hover:
@@ -2512,18 +2576,18 @@ arguments passed to splash, `username` and `password`.
 
 .. code-block:: lua
 
-    function main(splash)
+    function main(splash, args)
         function focus(sel)
-            splash:select(sel).node:focus()
+            splash:select(sel):focus()
         end
 
-        assert(splash:go(splash.args.url))
+        assert(splash:go(args.url))
         assert(splash:wait(0.5))
         focus('input[name=username]')
-        splash:send_text(splash.args.username)
+        splash:send_text(args.username)
         assert(splash:wait(0))
         focus('input[name=password]')
-        splash:send_text(splash.args.password)
+        splash:send_text(args.password)
         splash:select('input[type=submit]'):mouse_click()
         assert(splash:wait(0))
         -- Usually, wait for the submit request to finish

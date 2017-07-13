@@ -1,8 +1,8 @@
 Changes
 =======
 
-3.0 (TBA)
----------
+3.0 (2017-07-06)
+----------------
 
 WebKit is upgraded in this Splash release - Splash now uses
 https://github.com/annulen/webkit instead of official (deprecated
@@ -23,20 +23,52 @@ Backwards incompatible changes:
   to Splash, but Splash server itself now runs on Python 3.4+.
 * :ref:`splash-element-mouse-click` and :ref:`splash-element-mouse-hover`
   now click/hover element center by default, not element top-left corner.
+  Also, they scroll to the element being clicked/hovered if needed, to
+  make it work when an element is outside the current viewport. These methods
+  are now async; they wait for events to propagate
+  (unlike :ref:`splash-mouse-click` and :ref:`splash-mouse-hover`).
 
-Other changes:
+New features:
 
-* Qt is upgraded to 5.9 LTS, PyQT is upgraded to 5.9;
-* Docker now uses Ubuntu 16.04;
+* An alternative way to access :ref:`splash-args`: it can be received
+  as a second argument of ``main`` function
+  (i.e. ``function main(splash, args) ...``);
+* new :ref:`run` endpoint is an alternative to :ref:`execute` endpoint; it is
+  almost the same, but it doesn't require putting code into
+  ``function main(splash, args) ... end``;
+* new :ref:`splash-scroll-position` attribute allows to get and set
+  window scroll position;
+* Qt is upgraded to 5.9.1, PyQT is upgraded to 5.9;
+* official Docker image now uses Ubuntu 16.04.
+
+Other changes and bug fixes:
+
 * default :ref:`timeout <arg-timeout>` **limit** (i.e. max allowed value)
   is increased from 60s to 90s; default ``timeout`` **value**
   is still 30s.
+* Lua sandbox: instruction count limit is increased further
+  (10M instructions instead of 5M)
+* new docs section: :ref:`splash-lua-api-overview`;
+* new FAQ entries: :ref:`using-http-api`, :ref:`rendering-problems`;
 * Fixed an issue with :ref:`splash-runjs`: previously in case of an error
   it returned a table with error information. This approach didn't play well
   with Lua ``assert``, so now a string with an error message is returned
   instead. It was always documented that a string is returned by splash:runjs
   as a second value when error happens.
-* Documentation and testing improvements.
+* Fixed :ref:`splash-element-png` and :ref:`splash-element-jpeg` for elements
+  outside curent viewport;
+* DOM attributes and methods are documented as accessible on
+  elements directly, without ``.node`` - i.e.
+  ``splash:select('.my-element'):getAttribute('foo')`` instead of
+  ``splash:select('.my-element').node:getAttribute('foo')``;
+* exposed ``element:scrollIntoViewIfNeeded()`` method;
+* improved validation of ``headers`` arguments in :ref:`splash-go`,
+  :ref:`splash-set-custom-headers`, :ref:`splash-http-get` and
+  :ref:`splash-http-post`;
+* Splash shouldn't crash if an exception happens while creating a request
+  in network manager;
+* cleanup of JS event handlers is improved;
+* documentation and testing improvements.
 
 
 2.3.3 (2017-06-07)

@@ -115,13 +115,22 @@ def command(table_argument=False, sets_callback=False,
                 emits_lua_objects(meth)
             ),
             error_as_flag,
-            result_as_flag
+            result_as_flag,
         )
         meth._is_command = True
         meth._sets_callback = sets_callback
         return meth
 
     return decorator
+
+
+def _command_result_to_pyresult(res):
+    """ Convert result of a method decorated with @command to PyResult.
+    Use this method to call methods decorated with @command inside other
+    methods decorated with @command.
+    """
+    op, cmd = res
+    return PyResult(cmd, _operation=to_unicode(op))
 
 
 def lua_property(name):
@@ -233,13 +242,13 @@ def add_flag(tuple, flag):
     return new_tuple
 
 
-def exceptions_as_return_values(meth, error_as_flag=False, result_as_flag=False):
+def exceptions_as_return_values(meth, error_as_flag=False,
+                                result_as_flag=False):
     """Decorator for allowing Python exceptions to be caught from Lua.
 
     TODO: this decorator is the last one on the way from Python to Lua and thus
     is responsible for converting non-PyResult values to PyResult.  This is
     suboptimal and should be fixed.
-
     """
     @functools.wraps(meth)
     def exceptions_as_return_values_wrapper(self, *args, **kwargs):
@@ -257,7 +266,6 @@ def exceptions_as_return_values(meth, error_as_flag=False, result_as_flag=False)
                 res = (b'return', False, repr(e).encode('utf-8'))
             else:
                 res = (b'raise', repr(e).encode('utf-8'))
-
         return res
 
     return exceptions_as_return_values_wrapper
@@ -633,9 +641,9 @@ class Splash(BaseExposedObject):
         url = self.lua.lua2python(url, max_depth=1)
         baseurl = self.lua.lua2python(baseurl, max_depth=1)
         headers = self.lua.lua2python(headers, max_depth=2, encoding=None)
+        headers = self._validate_headers(headers)
         http_method = self.lua.lua2python(http_method, max_depth=1)
         formdata = self.lua.lua2python(formdata, max_depth=3)
-
         if url is None:
             raise ScriptError({
                 "argument": "url",
@@ -828,10 +836,13 @@ class Splash(BaseExposedObject):
             resp_wrapped = self.response_wrapper._create(resp)
             cmd.return_result(resp_wrapped)
 
+        headers = self.lua.lua2python(headers, max_depth=3)
+        headers = self._validate_headers(headers)
+
         command_args = dict(
             url=url,
             callback=callback,
-            headers=self.lua.lua2python(headers, max_depth=3),
+            headers=headers,
             follow_redirects=follow_redirects
         )
         if browser_command == "http_post":
@@ -941,6 +952,29 @@ class Splash(BaseExposedObject):
     @command()
     def send_text(self, text):
         self.tab.send_text(text)
+
+    @lua_property('scroll_position')
+    @command()
+    def get_scroll_position(self):
+        return self.tab.get_scroll_position()
+
+    @get_scroll_position.lua_setter
+    @command()
+    def scroll_to(self, x=None, y=None):
+        if x is None or y is None:
+            pos = self.tab.get_scroll_position()
+            x = pos['x'] if x is None else x
+            y = pos['y'] if y is None else y
+
+        for value, name in [(x, "x"), (y, "y")]:
+            if not isinstance(value, (int, float)):
+                raise ScriptError({
+                    "argument": name,
+                    "message": "scroll {} coordinate must be "
+                               "a number, got {}".format(name, repr(value))
+                })
+
+        self.tab.set_scroll_position(x, y)
 
     @command()
     def set_content(self, data, mime_type=None, baseurl=None):
@@ -1056,7 +1090,26 @@ class Splash(BaseExposedObject):
 
     @command(table_argument=True)
     def set_custom_headers(self, headers):
+        headers = self._validate_headers(headers)
         self.tab.set_custom_headers(self.lua.lua2python(headers, max_depth=3))
+
+    def _validate_headers(self, headers):
+        if headers is None:
+            return headers
+        res = {}
+        for key, value in headers.items():
+            if isinstance(value, (int, float)):
+                value = str(value)
+
+            if (not isinstance(key, (bytes, str)) or
+                not isinstance(value, (bytes, str))):
+                raise ScriptError({
+                    "message": "headers must be a table"
+                                " with strings as keys and values."
+                                "Header: `{!r}:{!r}` is not valid".format(key, value)
+                })
+            res[key] = value
+        return res
 
     @command()
     def get_viewport_size(self):
@@ -1315,6 +1368,7 @@ class Splash(BaseExposedObject):
                 sandboxed=False,
                 strict=self.strict_lua_runner,
             )
+            self._objects_to_clear.add(runner)
             coro = self.lua.create_coroutine(callback)
             runner.start(coro, coro_args, return_result, return_error)
             return runner
@@ -1333,6 +1387,9 @@ class Splash(BaseExposedObject):
             lambda o: isinstance(o, HTMLElement),
             convert=_expose,
         )
+
+    def wait_tick(self, time=0.0):
+        return _command_result_to_pyresult(self.wait(time))
 
 
 class _ExposedTimer(BaseExposedObject):
@@ -1467,9 +1524,12 @@ class _ExposedElement(BaseExposedObject):
         'requestFullscreen',
         'requestPointerLock',
         'scrollIntoView',
+        'scrollIntoViewIfNeeded',
         'setAttribute',
         'setAttributeNS',
-        'setPointerCapture'
+        'setPointerCapture',
+        'scrollIntoView',
+        'scrollIntoViewIfNeeded',
     ]
     NODE_METHODS = [
         'appendChild',
@@ -1734,6 +1794,7 @@ class _ExposedElement(BaseExposedObject):
             })
 
         self.element.mouse_click(x, y)
+        return self.splash.wait_tick()
 
     @command(error_as_flag=True)
     def mouse_hover(self, x=None, y=None):
@@ -1752,6 +1813,7 @@ class _ExposedElement(BaseExposedObject):
             })
 
         self.element.mouse_hover(x, y)
+        return self.splash.wait_tick()
 
     @command()
     def styles(self):
@@ -2165,6 +2227,7 @@ class SplashCoroutineRunner(BaseScriptRunner):
     """
     def __init__(self, lua, splash, log, sandboxed, strict):
         self.splash = splash
+        self._exited = False
         super(SplashCoroutineRunner, self).__init__(
             lua=lua,
             log=log,
@@ -2172,21 +2235,29 @@ class SplashCoroutineRunner(BaseScriptRunner):
             strict=strict,
         )
 
-    def start(self, coro_func, coro_args=None, return_result=None, return_error=None):
+    def start(self, coro_func, coro_args=None, return_result=None,
+              return_error=None):
         do_nothing = lambda *args, **kwargs: None
         self.return_result = return_result or do_nothing
         self.return_error = return_error or do_nothing
         super(SplashCoroutineRunner, self).start(coro_func, coro_args)
 
     def on_result(self, result):
+        if self._exited:
+            return
         self.return_result(result)
 
     def on_async_command(self, cmd):
+        if self._exited:
+            return
         self.splash.run_async_command(cmd)
 
     @stop_on_error
     def dispatch(self, cmd_id, *args):
         super(SplashCoroutineRunner, self).dispatch(cmd_id, *args)
+
+    def clear(self):
+        self._exited = True
 
 
 class MainCoroutineRunner(SplashCoroutineRunner):
@@ -2205,7 +2276,7 @@ class MainCoroutineRunner(SplashCoroutineRunner):
 
     def start(self, main_coro, return_result=None, return_error=None):
         self.exceptions.clear()
-        args = [self.splash.get_wrapped()]
+        args = [self.splash.get_wrapped(), self.splash.args]
         super(MainCoroutineRunner, self).start(
             coro_func=main_coro,
             coro_args=args,
@@ -2219,6 +2290,8 @@ class MainCoroutineRunner(SplashCoroutineRunner):
         # would be serialized like that anyway.
         #
         # FIXME: maybe request writer must be fixed?
+        if self._exited:
+            return
         if isinstance(result, tuple):
             result = list(result)
         self.return_result((
@@ -2229,6 +2302,8 @@ class MainCoroutineRunner(SplashCoroutineRunner):
         ))
 
     def on_lua_error(self, lua_exception):
+        if self._exited:
+            return
         py_exception = self.exceptions.get_last()
 
         if not py_exception:
@@ -2274,10 +2349,12 @@ class LuaRender(RenderScript):
 
     @stop_on_error
     def start(self, lua_source, sandboxed, lua_package_path,
-              lua_sandbox_allowed_modules, strict=False):
+              lua_sandbox_allowed_modules, strict=False,
+              implicit_main=False):
         self.exceptions = StoredExceptions()
         self.log(lua_source)
         self.sandboxed = sandboxed
+        self.implicit_main = implicit_main
         self.lua = SplashLuaRuntime(
             sandboxed=sandboxed,
             lua_package_path=lua_package_path,
@@ -2302,6 +2379,7 @@ class LuaRender(RenderScript):
             strict=strict,
         )
 
+        lua_source = self._process_lua_source(lua_source)
         try:
             main_coro = self.get_main_coro(lua_source)
         except lupa.LuaSyntaxError as e:
@@ -2343,3 +2421,9 @@ class LuaRender(RenderScript):
     def close(self):
         self.splash.clear()
         super(LuaRender, self).close()
+
+    def _process_lua_source(self, lua_source):
+        if not self.implicit_main:
+            return lua_source
+        return "function main(splash, args) %s end" % lua_source
+
